@@ -6,11 +6,11 @@ typedef OnStart = void Function();
 typedef OnStop = void Function();
 
 class _Message<R> {
-  _Message(this.task, this.respoonsePort);
+  _Message(this.task, this.responsePort);
 
   final Task<R> task;
 
-  final SendPort respoonsePort;
+  final SendPort responsePort;
 }
 
 class IsolateService {
@@ -90,9 +90,9 @@ class IsolateService {
         result = potentiallyAsyncResult;
       }
 
-      message.respoonsePort.send(List.filled(1, result));
+      message.responsePort.send(List.filled(1, result));
     } catch (e, stackTrace) {
-      message.respoonsePort.send(List<Object?>.filled(2, null)
+      message.responsePort.send(List<Object?>.filled(2, null)
         ..[0] = e
         ..[1] = stackTrace);
     }
