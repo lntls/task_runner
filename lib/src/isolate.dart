@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:isolate';
 
 typedef Task<R> = FutureOr<R> Function();
+typedef OnStart = void Function();
+typedef OnStop = void Function();
 
 class _Message<R> {
   _Message(this.task, this.respoonsePort);
@@ -12,31 +14,76 @@ class _Message<R> {
 }
 
 class IsolateService {
-  IsolateService._() {
-    _port.handler = _handleMessage;
+  IsolateService._(this._onStart, this._onStop) {
+    if (_current != null) {
+      throw StateError('IsolateService already created.');
+    }
+
     _current = this;
   }
 
   static IsolateService? _current;
   static IsolateService get current {
     if (_current == null) {
-      throw StateError('Do not use IsolateService in root isolate.');
+      throw StateError('IsolateService not created.');
+    }
+
+    if (_current!.isStopped) {
+      throw StateError('IsolateService already stopped.');
     }
 
     return _current!;
   }
 
+  final OnStart? _onStart;
+
+  final OnStop? _onStop;
+
   final _port = RawReceivePort();
 
-  void _close() {
-    _port.close();
+  final _data = <Type, Object?>{};
+
+  bool _isStopped = false;
+  bool get isStopped => _isStopped;
+
+  void put<T>(T value) {
+    _data[T] = value;
+  }
+
+  T? get<T>() {
+    return _data[T] as T?;
+  }
+
+  T? remove<T>() {
+    return _data.remove(T) as T?;
+  }
+
+  bool contains<T>() {
+    return _data.containsKey(T);
+  }
+
+  void _start(void Function(SendPort) action) {
+    try {
+      _onStart?.call();
+    } finally {
+      _port.handler = _handleMessage;
+      action(_port.sendPort);
+    }
+  }
+
+  void _stop() {
+    try {
+      _onStop?.call();
+    } finally {
+      _isStopped = true;
+      _port.close();
+    }
   }
 
   Future<void> _handleMessage(_Message message) async {
     try {
       final Object? result;
       final potentiallyAsyncResult = message.task();
-
       if (potentiallyAsyncResult is Future) {
         result = await potentiallyAsyncResult;
       } else {
@@ -52,43 +99,14 @@ class IsolateService {
   }
 }
 
-class IsolateLocal {
-  IsolateLocal._() {
-    _current = this;
-  }
-
-  static IsolateLocal? _current;
-  static IsolateLocal get current {
-    if (_current == null) {
-      throw StateError('Do not use IsolateLocal in root isolate.');
-    }
-
-    return _current!;
-  }
-
-  final _data = <Type, Object?>{};
-
-  void put<T>(T value) {
-    _data[T] = value;
-  }
-
-  T get<T>() {
-    return _data[T] as T;
-  }
-
-  T remove<T>() {
-    return _data.remove(T) as T;
-  }
-
-  bool contains<T>() {
-    return _data.containsKey(T);
-  }
-}
-
 class IsolateClient {
   IsolateClient._(this._isolate, this._sendPort);
 
-  static Future<IsolateClient> create({String? debugName}) async {
+  static Future<IsolateClient> create({
+    String? debugName,
+    OnStart? onStart,
+    OnStop? onStop,
+  }) async {
     final completer = Completer<SendPort>();
     final resultPort = RawReceivePort();
     resultPort.handler = (SendPort sendPort) {
@@ -96,26 +114,29 @@ class IsolateClient {
       completer.complete(sendPort);
     };
 
-    final Isolate isolate;
-    final SendPort port;
     try {
-      isolate = await Isolate.spawn(
-        (SendPort sendPort) {
-          IsolateService._();
-          IsolateLocal._();
-          sendPort.send(IsolateService.current._port.sendPort);
+      final message = List<Object?>.filled(3, null)
+        ..[0] = resultPort.sendPort
+        ..[1] = onStart
+        ..[2] = onStop;
+      final isolate = await Isolate.spawn(
+        (List<Object?> message) {
+          final sendPort = message[0] as SendPort;
+          IsolateService._(
+            message[1] as OnStart?,
+            message[2] as OnStop?,
+          )._start((port) => sendPort.send(port));
         },
-        resultPort.sendPort,
+        message,
         debugName: debugName,
       );
-      port = await completer.future;
+
+      return IsolateClient._(isolate, await completer.future);
     } catch (error, stackTrace) {
       resultPort.close();
       completer.completeError(error, stackTrace);
       rethrow;
     }
-
-    return IsolateClient._(isolate, port);
   }
 
   final Isolate _isolate;
@@ -141,7 +162,7 @@ class IsolateClient {
 
   Future<void> close() {
     return postTask(() {
-      return IsolateService.current._close();
+      return IsolateService.current._stop();
     });
   }
 }

@@ -6,11 +6,11 @@ void main() {
     print('Hello TaskRunner!');
   });
   taskRunner.run(() {
-    IsolateLocal.current.put<int>(100);
-    IsolateLocal.current.get<int>();
+    IsolateService.current.put<int>(100);
+    IsolateService.current.get<int>();
   });
   taskRunner.run(() {
-    print('IsolateLocal: ${IsolateLocal.current.get<int>()}');
+    print('IsolateLocal: ${IsolateService.current.get<int>()}');
   });
   taskRunner.close();
 }

@@ -20,11 +20,25 @@ class TaskRunnerError extends Error {
 
 abstract class TaskRunner {
   /// [size] numbers of isolates.
-  factory TaskRunner({String? debugName, int size = 1}) {
+  factory TaskRunner({
+    String? debugName,
+    int size = 1,
+    OnStart? onStart,
+    OnStop? onStop,
+  }) {
     if (size > 1) {
-      return _MutliIsolateRunner(debugName: debugName, size: size);
+      return MutliIsolateTaskRunner(
+        debugName: debugName,
+        size: size,
+        onStart: onStart,
+        onStop: onStop,
+      );
     } else {
-      return _SingleIsolateRunner(debugName: debugName);
+      return SingleIsolateTaskRunner(
+        debugName: debugName,
+        onStart: onStart,
+        onStop: onStop,
+      );
     }
   }
 
@@ -33,10 +47,19 @@ abstract class TaskRunner {
   Future<void> close();
 }
 
-class _SingleIsolateRunner implements TaskRunner {
-  _SingleIsolateRunner({this.debugName});
+class SingleIsolateTaskRunner implements TaskRunner {
+  SingleIsolateTaskRunner({
+    this.debugName,
+    OnStart? onStart,
+    OnStop? onStop,
+  })  : _onStart = onStart,
+        _onStop = onStop;
 
   final String? debugName;
+
+  final OnStart? _onStart;
+
+  final OnStop? _onStop;
 
   IsolateClient? _client;
 
@@ -57,7 +80,11 @@ class _SingleIsolateRunner implements TaskRunner {
 
   Future<void> _init() async {
     _completer = Completer<void>();
-    _client = await IsolateClient.create(debugName: debugName);
+    _client = await IsolateClient.create(
+      debugName: debugName,
+      onStart: _onStart,
+      onStop: _onStop,
+    );
     _completer!.complete();
   }
 
@@ -105,21 +132,25 @@ class _SingleIsolateRunner implements TaskRunner {
   }
 }
 
-class _MutliIsolateRunner implements TaskRunner {
-  _MutliIsolateRunner({
+class MutliIsolateTaskRunner implements TaskRunner {
+  MutliIsolateTaskRunner({
     String? debugName,
     int size = 1,
+    OnStart? onStart,
+    OnStop? onStop,
   }) : _runners = List.generate(
           size,
           (index) {
-            return _SingleIsolateRunner(
+            return SingleIsolateTaskRunner(
               debugName: debugName == null ? null : '$debugName($index)',
+              onStart: onStart,
+              onStop: onStop,
             );
           },
           growable: false,
         );
 
-  final List<_SingleIsolateRunner> _runners;
+  final List<SingleIsolateTaskRunner> _runners;
 
   void _waitIdleRunner(void Function(TaskRunner runner) action) {
     void Function(TaskRunner)? pending = action;
@@ -157,5 +188,13 @@ class _MutliIsolateRunner implements TaskRunner {
       });
     });
     return completer.future;
+  }
+}
+
+extension TaskRunnerExtension on TaskRunner {
+  Future<R> runWithArgs<R, A>(FutureOr<R> Function(A) task, {required A args}) {
+    return run(() {
+      return task(args);
+    });
   }
 }
